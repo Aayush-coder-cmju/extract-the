@@ -1,3 +1,8 @@
-streamlit>=1.46,<2
-google-genai>=1.30,<3
-pypdf>=5,<7
+# Streamlit web interface
+streamlit>=1.46,<2.0
+# Google Gen AI SDK for Gemini question generation
+google-genai>=1.30,<3.0
+# Extract text from uploaded PDFs
+pypdf>=5.0,<7.0
+# Validate and normalize uploaded textbook photos
+Pillow>=10,<13
