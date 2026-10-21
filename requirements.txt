@@ -1,0 +1,14 @@
+# Streamlit web interface
+streamlit>=1.46,<2.0
+# Google Gen AI SDK for Gemini question generation
+google-genai>=1.30,<3.0
+# Extract text from uploaded PDFs
+pypdf>=5.0,<7.0
+# Validate and normalize uploaded textbook photos
+Pillow>=10,<13
+# Read uploaded Word documents
+python-docx>=1.1,<2.0
+# Read uploaded PowerPoint presentations
+python-pptx>=1.0,<2.0
+# Read uploaded Excel workbooks
+openpyxl>=3.1,<4.0
