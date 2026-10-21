@@ -27,12 +27,12 @@ LEVELS = ["Easy", "Medium", "Hard"]
 WORD_BANK = ["ADVENTURE", "TREASURE", "MYSTERY", "JOURNEY", "STARDUST", "ESCAPE"]
 
 THEMES = [
-    {"name": "Mosswild Jungle", "bg": "#071e22", "accent": "#58d68d", "second": "#20b8a6", "gold": "#f6c85f"},
-    {"name": "Amber Ruins", "bg": "#24170f", "accent": "#f39c3d", "second": "#e65353", "gold": "#ffd166"},
-    {"name": "Moonlit Reef", "bg": "#101b39", "accent": "#69b7ff", "second": "#9876ff", "gold": "#55e4d2"},
-    {"name": "Solar Citadel", "bg": "#281424", "accent": "#ff718e", "second": "#f2b84b", "gold": "#ffe187"},
-    {"name": "Crystal Tundra", "bg": "#10232c", "accent": "#80e0e9", "second": "#72a7ff", "gold": "#d3f6ff"},
-    {"name": "Violet Nebula", "bg": "#1a1430", "accent": "#bc8cff", "second": "#f079ca", "gold": "#ffe085"},
+    {"name": "Mosswild Jungle", "bg": "#071e22", "surface": "#102a2e", "surface2": "#163a38", "field": "#08191d", "border": "#397060", "text": "#f3fff8", "muted": "#c0d3cb", "accent": "#58d68d", "second": "#20b8a6", "gold": "#f6c85f"},
+    {"name": "Amber Ruins", "bg": "#24170f", "surface": "#382417", "surface2": "#4b2d1a", "field": "#1c100b", "border": "#765332", "text": "#fff7ec", "muted": "#dec9b0", "accent": "#f39c3d", "second": "#e65353", "gold": "#ffd166"},
+    {"name": "Moonlit Reef", "bg": "#101b39", "surface": "#1b2b50", "surface2": "#253968", "field": "#0b1530", "border": "#5878a8", "text": "#f2f7ff", "muted": "#c4d4ed", "accent": "#69b7ff", "second": "#9876ff", "gold": "#55e4d2"},
+    {"name": "Solar Citadel", "bg": "#281424", "surface": "#3a1e30", "surface2": "#532641", "field": "#1b0f20", "border": "#8b4b67", "text": "#fff3f5", "muted": "#e2c6d0", "accent": "#ff718e", "second": "#f2b84b", "gold": "#ffe187"},
+    {"name": "Crystal Tundra", "bg": "#10232c", "surface": "#193742", "surface2": "#204b56", "field": "#0b1a22", "border": "#4d8992", "text": "#effdff", "muted": "#c5e0e6", "accent": "#80e0e9", "second": "#72a7ff", "gold": "#d3f6ff"},
+    {"name": "Violet Nebula", "bg": "#1a1430", "surface": "#2b2050", "surface2": "#3b2865", "field": "#140f26", "border": "#694f91", "text": "#fbf5ff", "muted": "#d2c6e7", "accent": "#bc8cff", "second": "#f079ca", "gold": "#ffe085"},
 ]
 
 SAMPLES = {
@@ -104,8 +104,15 @@ def norm(value: object) -> str:
     return " ".join(re.findall(r"[\w]+", text, flags=re.UNICODE))
 
 
-def new_word_puzzle() -> tuple[str, list[str], list[str], list[str]]:
-    word = random.choice(WORD_BANK)
+def new_word_puzzle(used_words: list[str] | None = None) -> tuple[str, list[str], list[str], list[str]]:
+    used = list(used_words or [])
+    available = [candidate for candidate in WORD_BANK if candidate not in used]
+    if not available:
+        # Once every word has been used, still guarantee the next puzzle differs
+        # from the immediately previous one.
+        previous = used[-1] if used else None
+        available = [candidate for candidate in WORD_BANK if candidate != previous]
+    word = random.choice(available or WORD_BANK)
     quotient, remainder = divmod(len(word), 3)
     parts: list[str] = []
     start = 0
@@ -121,7 +128,8 @@ def new_word_puzzle() -> tuple[str, list[str], list[str], list[str]]:
 
 
 def reset_game_state() -> None:
-    word, parts, display_parts, award_parts = new_word_puzzle()
+    used_words = list(st.session_state.get("used_words", []))
+    word, parts, display_parts, award_parts = new_word_puzzle(used_words)
     saved_wallet = int(st.session_state.get("saved_points", 0))
     st.session_state.update(
         {
@@ -157,6 +165,7 @@ def reset_game_state() -> None:
             "word_parts": parts,
             "word_display_parts": display_parts,
             "word_award_parts": award_parts,
+            "used_words": used_words,
             "theme_index": random.randrange(len(THEMES)),
             "sample_name": None,
             "sample_variant": 0,
@@ -199,52 +208,57 @@ def apply_theme() -> None:
     st.markdown(
         f"""
         <style>
-        :root {{ --quest-accent:{colors['accent']}; --quest-second:{colors['second']}; --quest-gold:{colors['gold']}; }}
+        :root {{ --quest-accent:{colors['accent']}; --quest-second:{colors['second']}; --quest-gold:{colors['gold']}; --quest-surface:{colors['surface']}; --quest-surface2:{colors['surface2']}; --quest-field:{colors['field']}; --quest-border:{colors['border']}; --quest-text:{colors['text']}; --quest-muted:{colors['muted']}; }}
         [data-testid="stAppViewContainer"] {{
             background: radial-gradient(ellipse at 8% 0%, {colors['accent']}28, transparent 34%),
                         radial-gradient(ellipse at 95% 15%, {colors['second']}25, transparent 35%),
-                        linear-gradient(155deg, {colors['bg']}, #07111f 80%);
-            color: #f4f7ff;
+                        linear-gradient(155deg, {colors['bg']}, {colors['field']} 82%);
+            color:var(--quest-text); transition:background 650ms ease,color 450ms ease;
         }}
         [data-testid="stHeader"] {{ background:transparent; }}
-        [data-testid="stSidebar"] {{ background:linear-gradient(180deg,{colors['bg']},#0b1424); }}
+        [data-testid="stSidebar"] {{ background:linear-gradient(180deg,{colors['bg']},{colors['field']}); color:var(--quest-text); }}
         .block-container {{ max-width:1180px; padding-top:1.3rem; padding-bottom:3rem; }}
-        [data-testid="stMetric"] {{ background:#101d31cc; border:1px solid #ffffff20; border-radius:16px; padding:12px 15px; }}
-        [data-testid="stMetricLabel"] {{ color:#c0cee2; }}
-        [data-testid="stMetricValue"] {{ color:#fff; }}
-        div[data-testid="stButton"] > button {{ border-radius:13px; min-height:2.7rem; font-weight:700; border:1px solid #ffffff28; background:#132541; color:#f4f7ff; }}
+        [data-testid="stMetric"] {{ background:{colors['surface']}ee; border:1px solid {colors['border']}; border-radius:16px; padding:12px 15px; transition:background 650ms ease,border-color 650ms ease; }}
+        [data-testid="stMetricLabel"] {{ color:var(--quest-muted); }}
+        [data-testid="stMetricValue"] {{ color:var(--quest-text); }}
+        div[data-testid="stButton"] > button {{ border-radius:13px; min-height:2.7rem; font-weight:700; border:1px solid var(--quest-border); background:var(--quest-surface2); color:var(--quest-text); transition:background 500ms ease,border-color 500ms ease,transform 180ms ease; }}
         div[data-testid="stButton"] > button:hover {{ border-color:var(--quest-accent); color:#fff; box-shadow:0 0 0 2px color-mix(in srgb,var(--quest-accent) 28%,transparent); }}
         div[data-testid="stButton"] > button[kind="primary"] {{ background:linear-gradient(110deg,var(--quest-accent),var(--quest-second)); color:#07111f; border:0; }}
-        div[data-testid="stTextArea"] textarea, div[data-testid="stTextInput"] input {{ background:#091629; color:#f4f7ff; border-color:#ffffff2b; border-radius:13px; }}
+        div[data-testid="stTextArea"] textarea, div[data-testid="stTextInput"] input {{ background:var(--quest-field); color:var(--quest-text); border-color:var(--quest-border); border-radius:13px; }}
         .sw-brand {{ color:var(--quest-gold); font-size:.78rem; letter-spacing:.19em; font-weight:900; }}
-        .sw-hero {{ border:1px solid #ffffff21; border-radius:23px; padding:25px 27px; margin:7px 0 15px; background:linear-gradient(120deg,#101d31e8,#101b2be0); box-shadow:0 18px 55px #0005; }}
+        .sw-hero {{ border:1px solid var(--quest-border); border-radius:23px; padding:25px 27px; margin:7px 0 15px; background:linear-gradient(120deg,var(--quest-surface),var(--quest-surface2)); box-shadow:0 18px 55px #0005; }}
         .sw-kicker {{ color:var(--quest-accent); font-size:.78rem; font-weight:900; letter-spacing:.16em; text-transform:uppercase; }}
-        .sw-title {{ color:#fff; font-size:clamp(2rem,5vw,3.5rem); font-weight:950; letter-spacing:-.055em; line-height:1.02; margin:.45rem 0 .7rem; }}
-        .sw-subtitle {{ color:#c7d5e8; font-size:1.05rem; max-width:800px; }}
-        .sw-panel {{ border:1px solid #ffffff20; border-radius:20px; padding:20px; background:#101d31dc; box-shadow:0 16px 42px #0004; margin:12px 0; }}
+        .sw-title {{ color:var(--quest-text); font-size:clamp(2rem,5vw,3.5rem); font-weight:950; letter-spacing:-.055em; line-height:1.02; margin:.45rem 0 .7rem; }}
+        .sw-subtitle {{ color:var(--quest-muted); font-size:1.05rem; max-width:800px; }}
+        .sw-panel {{ border:1px solid var(--quest-border); border-radius:20px; padding:20px; background:linear-gradient(135deg,var(--quest-surface),var(--quest-surface2)); box-shadow:0 16px 42px #0004; margin:12px 0; transition:background 650ms ease,border-color 650ms ease; }}
         [data-testid="stTextInput"] label, [data-testid="stTextArea"] label,
         [data-testid="stFileUploader"] label, [data-testid="stWidgetLabel"],
         [data-testid="stWidgetLabel"] p {{ color:#f4f7ff !important; font-weight:750 !important; }}
-        [data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea {{ color:#f8fbff !important; caret-color:#fff; }}
+        [data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea {{ color:var(--quest-text) !important; caret-color:#fff; }}
         [data-testid="stTextInput"] input::placeholder, [data-testid="stTextArea"] textarea::placeholder {{ color:#aebed3 !important; opacity:1 !important; }}
         [data-testid="stTextInput"] input:focus, [data-testid="stTextArea"] textarea:focus {{ border-color:var(--quest-accent) !important; box-shadow:0 0 0 2px color-mix(in srgb,var(--quest-accent) 35%,transparent) !important; }}
-        [data-testid="stFileUploaderDropzone"] {{ background:linear-gradient(130deg,#102139,#142944) !important; border:2px dashed var(--quest-accent) !important; border-radius:17px !important; }}
+        [data-testid="stFileUploaderDropzone"] {{ background:linear-gradient(130deg,var(--quest-surface),var(--quest-surface2)) !important; border:2px dashed var(--quest-accent) !important; border-radius:17px !important; }}
         [data-testid="stFileUploaderDropzoneInstructions"], [data-testid="stFileUploaderDropzoneInstructions"] div {{ color:#eaf2ff !important; }}
         [data-testid="stFileUploaderDropzone"] button {{ background:linear-gradient(110deg,var(--quest-accent),var(--quest-second)) !important; color:#08111f !important; border:0 !important; font-weight:800 !important; }}
         [data-testid="stFileUploader"] small, [data-testid="stFileUploader"] [data-testid="stCaptionContainer"] {{ color:#c5d2e4 !important; }}
-        .sw-home-hero {{ position:relative; overflow:hidden; border:1px solid #ffffff25; border-radius:26px; padding:clamp(22px,4vw,38px); margin:12px 0 24px; background:radial-gradient(circle at 90% 15%,var(--quest-second)40,transparent 30%),linear-gradient(120deg,#101d31f2,#111c30e8); box-shadow:0 22px 60px #0006; }}
-        .sw-home-hero h2 {{ color:#fff; font-size:clamp(1.7rem,3vw,2.55rem); line-height:1.08; margin:.65rem 0; letter-spacing:-.035em; }}
-        .sw-home-hero p {{ color:#d4e0f0; font-size:1.05rem; max-width:780px; margin:.45rem 0 1rem; }}
+        .sw-home-hero {{ position:relative; overflow:hidden; border:1px solid var(--quest-border); border-radius:26px; padding:clamp(22px,4vw,38px); margin:12px 0 24px; background:radial-gradient(circle at 90% 15%,var(--quest-second)40,transparent 30%),linear-gradient(120deg,var(--quest-surface),var(--quest-surface2)); box-shadow:0 22px 60px #0006; }}
+        .sw-home-hero h2 {{ color:var(--quest-text); font-size:clamp(1.7rem,3vw,2.55rem); line-height:1.08; margin:.65rem 0; letter-spacing:-.035em; }}
+        .sw-home-hero p {{ color:var(--quest-muted); font-size:1.05rem; max-width:780px; margin:.45rem 0 1rem; }}
         .sw-home-badges {{ display:flex; flex-wrap:wrap; gap:9px; margin-top:18px; }}
         .sw-home-badge {{ color:#f7fbff; background:#ffffff12; border:1px solid #ffffff2a; border-radius:999px; padding:8px 13px; font-size:.9rem; font-weight:750; }}
-        .sw-sample-card {{ height:100%; min-height:190px; border:1px solid #ffffff25; border-radius:20px; padding:20px; background:linear-gradient(145deg,#12223b,#0e192b); box-shadow:0 14px 34px #0004; margin:10px 0; }}
+        .sw-sample-card {{ height:100%; min-height:190px; border:1px solid var(--quest-border); border-radius:20px; padding:20px; background:linear-gradient(145deg,var(--quest-surface2),var(--quest-surface)); box-shadow:0 14px 34px #0004; margin:10px 0; }}
         .sw-sample-icon {{ font-size:2rem; margin-bottom:8px; }}
         .sw-sample-card h3 {{ color:#fff; font-size:1.35rem; margin:.3rem 0 .5rem; }}
-        .sw-sample-card p {{ color:#cad7e8; line-height:1.5; }}
+        .sw-sample-card p {{ color:var(--quest-muted); line-height:1.5; }}
         .sw-card-meta {{ color:var(--quest-gold); font-size:.83rem; font-weight:800; margin-top:12px; }}
-        .sw-section-title {{ color:#fff; font-size:1.55rem; font-weight:900; margin:.2rem 0; }}
-        .sw-section-copy {{ color:#cbd8e9; margin-bottom:10px; }}
-        .sw-map {{ display:flex; justify-content:space-between; gap:4px; border:1px solid #ffffff20; border-radius:18px; padding:14px 10px; background:#0b1728d9; margin:12px 0 15px; }}
+        .sw-section-title {{ color:var(--quest-text); font-size:1.55rem; font-weight:900; margin:.2rem 0; }}
+        .sw-section-copy {{ color:var(--quest-muted); margin-bottom:10px; }}
+        .sw-map {{ display:flex; justify-content:space-between; gap:4px; border:1px solid var(--quest-border); border-radius:18px; padding:14px 10px; background:var(--quest-surface); margin:12px 0 15px; }}
+        .sw-map-focus {{ border:1px solid var(--quest-border); border-left:5px solid var(--quest-accent); border-radius:14px; padding:11px 15px; background:linear-gradient(110deg,var(--quest-surface),var(--quest-surface2)); color:var(--quest-muted); margin:6px 0 14px; transition:background 650ms ease,border-color 650ms ease; }}
+        .sw-map-focus strong {{ color:var(--quest-text); }}
+        @keyframes sw-glow {{ 0%,100% {{ box-shadow:0 0 0 0 color-mix(in srgb,var(--quest-accent) 0%,transparent); }} 50% {{ box-shadow:0 0 16px 2px color-mix(in srgb,var(--quest-accent) 35%,transparent); }} }}
+        div[data-testid="stButton"] > button[kind="primary"] {{ animation:sw-glow 2.8s ease-in-out infinite; }}
+        @media (prefers-reduced-motion:reduce) {{ *,*::before,*::after {{ animation-duration:.01ms !important; transition-duration:.01ms !important; }} }}
         .sw-stop {{ flex:1; text-align:center; color:#91a7c2; font-size:.72rem; line-height:1.25; }}
         .sw-stop b {{ display:block; color:#eef4ff; font-size:.78rem; margin-top:4px; }}
         .sw-stop .dot {{ margin:auto; width:37px; height:37px; border-radius:50%; display:grid; place-items:center; border:2px solid #51637d; background:#14233a; font-size:1rem; }}
@@ -316,13 +330,15 @@ def render_map() -> None:
     for index, (icon, label) in enumerate(labels):
         with columns[index]:
             selected = index == pos
+            reached = index <= pos
+            marker = "🔒" if not reached else ("✅" if index < pos else icon)
             if st.button(
-                f"{icon} {label}",
+                f"{marker} {label}",
                 key=f"route-{st.session_state.round}-{index}",
                 type="primary" if selected else "secondary",
-                disabled=index > pos,
+                disabled=not reached,
                 use_container_width=True,
-                help="Click a reached map stop to inspect it. Locked stops open as you progress.",
+                help="Explore this reached stop. Locked rooms open when you progress.",
             ):
                 st.session_state.map_focus = index
             if selected:
@@ -336,7 +352,11 @@ def render_map() -> None:
         "Hard: reason from evidence in the supplied passage.",
         "End: arrange the three clue fragments and enter the secret word.",
     ]
-    st.caption(f"Map focus - {labels[focus][1]}: {map_notes[focus]}")
+    st.markdown(
+        f'<div class="sw-map-focus"><strong>🗺️ Map explorer · {labels[focus][1]}</strong><br>{html.escape(map_notes[focus])} '
+        f'{"Choose another glowing stop to inspect the route." if focus != pos else "Complete this stage to unlock the next map stop."}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def display_stats() -> None:
@@ -465,9 +485,10 @@ def quiz_prompt(passage: str, earlier_questions: list[str], attachment_mime: str
             "hints": ["gentle hint", "stronger hint"],
         }
     ]
+    concise_history = [str(question)[:120] for question in earlier_questions[-9:]]
     payload = {
         "provided_passage": passage,
-        "earlier_questions_to_avoid": earlier_questions,
+        "earlier_questions_to_avoid": concise_history,
     }
     return f"""
 You create school-friendly escape-room quizzes. Follow the supplied passage and attached textbook material only; do not use outside facts.
@@ -476,7 +497,7 @@ Do not introduce facts, people, terms, events, or concepts that are absent from 
 {source_instruction}
 Return ONLY one JSON object with this structure:
 {json.dumps(sample_response, ensure_ascii=False)}
-There must be exactly three questions, in this order: Easy direct recall; Medium explanation or connection; Hard reasoning that is fully supported by the passage. Each has exactly four different options, with answer as the zero-based correct option index. Both hints and the correct option must be answerable from the passage. Every evidence value must be copied exactly as a continuous quote from source_text. Avoid asking anything listed in earlier_questions_to_avoid. Make the passage and every question understandable to a school student.
+There must be exactly three concise questions, in this order: Easy direct recall; Medium explanation or connection; Hard reasoning that is fully supported by the passage. Each has exactly four short, different options, with answer as the zero-based correct option index. Both hints and the correct option must be answerable from the passage. Keep evidence to an exact continuous quote of at most 25 words. Avoid repeating or paraphrasing anything listed in earlier_questions_to_avoid. Make the passage and every question understandable to a school student. Return only the required fields, with no extra explanation.
 Input data:
 {json.dumps(payload, ensure_ascii=False)}
 """.strip()
@@ -514,7 +535,8 @@ def generate_quiz(
             contents=contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                max_output_tokens=3500 if attachment_bytes else 1600,
+                max_output_tokens=2800 if attachment_bytes else 1250,
+                temperature=0.8,
             ),
         )
     except Exception as exc:
@@ -607,7 +629,9 @@ def clear_sample() -> None:
 
 
 def choose_new_word() -> None:
-    word, pieces, display_pieces, award_pieces = new_word_puzzle()
+    used_words = list(st.session_state.get("used_words", []))
+    word, pieces, display_pieces, award_pieces = new_word_puzzle(used_words)
+    st.session_state.used_words = (used_words + [word])[-len(WORD_BANK):]
     st.session_state.word = word
     st.session_state.word_parts = pieces
     st.session_state.word_display_parts = display_pieces
@@ -663,7 +687,7 @@ def start_adventure(passage_input: str, topic: str, subject: str, uploaded_file)
             begin_round(quiz, topic or sample["topic"], subject or sample["subject"])
             return
 
-        with st.spinner("Gemini 3.5 is reading your chapter and making three passage-based questions…"):
+        with st.spinner("Reading your chapter and opening three quick quiz rooms…"):
             quiz = generate_quiz(passage, attachment_bytes, attachment_mime)
         st.session_state.sample_name = None
         begin_round(quiz, topic or "Your chapter", subject or "Your subject")
@@ -726,9 +750,9 @@ def answer_question(option_index: int) -> None:
         st.session_state.round += 1
         st.session_state.game_state = "restarting"
         st.session_state.message = "All three lives are used. The chapter is opening a fresh round."
-        change_theme()
     else:
         st.session_state.message = "That choice isn't supported by the passage. One life used — read the clue and try again."
+    change_theme()
 
 
 def use_hint() -> None:
@@ -772,17 +796,30 @@ def restart_with_fresh_questions() -> None:
         selected_sample = st.session_state.sample_name
         if selected_sample and selected_sample in SAMPLES:
             sample = SAMPLES[selected_sample]
-            variant_count = len(sample["variants"])
-            st.session_state.sample_variant = (st.session_state.sample_variant + 1) % variant_count
-            quiz = validate_quiz(
-                {"source_text": sample["text"], "questions": sample["variants"][st.session_state.sample_variant]},
-                expected_source=sample["text"],
-            )
+            previous_keys = {norm(question) for question in st.session_state.all_question_names}
+            fresh_variants = [
+                index
+                for index, variant in enumerate(sample["variants"])
+                if all(norm(question["question"]) not in previous_keys for question in variant)
+            ]
+            if fresh_variants:
+                st.session_state.sample_variant = random.choice(fresh_variants)
+                quiz = validate_quiz(
+                    {"source_text": sample["text"], "questions": sample["variants"][st.session_state.sample_variant]},
+                    expected_source=sample["text"],
+                )
+            else:
+                with st.spinner("Opening fresh questions from the same sample chapter…"):
+                    quiz = generate_quiz(
+                        sample["text"],
+                        earlier_questions=st.session_state.all_question_names[-9:],
+                    )
+                st.session_state.sample_name = None
         else:
-            with st.spinner("Gemini 3.5 is preparing three new questions from the same passage…"):
+            with st.spinner("Opening fresh questions from the same chapter…"):
                 quiz = generate_quiz(
                     st.session_state.source_text,
-                    earlier_questions=st.session_state.all_question_names[-30:],
+                    earlier_questions=st.session_state.all_question_names[-9:],
                 )
         begin_round(quiz, st.session_state.topic, st.session_state.subject, keep_timer=True)
         st.session_state.message = f"Round {st.session_state.round}: fresh {st.session_state.subject} questions."
@@ -922,11 +959,11 @@ def render_cleared() -> None:
 
 def render_word_gate() -> None:
     st.markdown(
-        '<div class="sw-panel"><div class="sw-kicker">Final lock · all three fragments collected</div><h2>🧩 Assemble the escape word</h2><p>Rearrange the three clue fragments into the secret word. Type the completed word, then press Enter.</p></div>',
+        '<div class="sw-panel"><div class="sw-kicker">Final lock · all three fragments collected</div><h2>🧩 Unscramble the final word</h2><p>Your three letter groups are mixed up. Rearrange the scrambled fragments to make one secret word, type it below, and press Enter to escape.</p></div>',
         unsafe_allow_html=True,
     )
     tiles = "".join(f'<span class="sw-fragment">{html.escape(part)}</span>' for part in st.session_state.word_display_parts)
-    st.markdown(f'<div style="text-align:center;margin:12px 0 20px">{tiles}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sw-kicker" style="text-align:center;margin:16px 0 5px">Scrambled clue fragments · arrange these letter groups</div><div style="text-align:center;margin:8px 0 20px">{tiles}</div>', unsafe_allow_html=True)
     with st.form("word-gate-form", clear_on_submit=False):
         guess = st.text_input("Your assembled word", placeholder="Type the letters in the correct order")
         submitted = st.form_submit_button("🔓 Enter the word", type="primary", use_container_width=True)
@@ -1005,6 +1042,60 @@ def make_report_text() -> str:
     return "\n".join(lines)
 
 
+def play_same_chapter_again() -> None:
+    """Start a clean replay on the same source with a different question set."""
+    topic = st.session_state.topic
+    subject = st.session_state.subject
+    source_text = st.session_state.source_text
+    sample_name = st.session_state.sample_name
+    prior_questions = list(st.session_state.get("all_question_names", []))
+    prior_question_keys = {norm(question) for question in prior_questions}
+    selected_variant: int | None = None
+
+    try:
+        if sample_name in SAMPLES:
+            sample = SAMPLES[sample_name]
+            fresh_variants = [
+                index
+                for index, variant in enumerate(sample["variants"])
+                if all(norm(question["question"]) not in prior_question_keys for question in variant)
+            ]
+            if fresh_variants:
+                selected_variant = random.choice(fresh_variants)
+                quiz = validate_quiz(
+                    {"source_text": sample["text"], "questions": sample["variants"][selected_variant]},
+                    expected_source=sample["text"],
+                )
+            else:
+                with st.spinner("Making a fresh set of questions for this chapter…"):
+                    quiz = generate_quiz(source_text, earlier_questions=prior_questions[-9:])
+                sample_name = None
+        else:
+            with st.spinner("Making a fresh set of questions for this chapter…"):
+                quiz = generate_quiz(source_text, earlier_questions=prior_questions[-9:])
+
+        reset_game_state()
+        st.session_state.all_question_names = prior_questions[-60:]
+        st.session_state.topic_input = topic
+        st.session_state.subject_input = subject
+        st.session_state.passage_input = quiz["source_text"]
+        st.session_state.update(
+            {
+                "topic": topic,
+                "subject": subject,
+                "source_text": quiz["source_text"],
+                "sample_name": sample_name,
+                "sample_variant": selected_variant if selected_variant is not None else 0,
+            }
+        )
+        begin_round(quiz, topic, subject)
+        st.session_state.message = "A new adventure is ready with fresh questions from the same chapter."
+        st.rerun()
+    except Exception as exc:
+        # Keep the completed report visible if fresh questions cannot be made.
+        st.error(f"I couldn't make a fresh replay: {exc}")
+
+
 def render_report() -> None:
     st.markdown('<div class="sw-panel"><div class="sw-kicker">SMARTWORLD · Adventure recap</div><h2>📊 Final report</h2></div>', unsafe_allow_html=True)
     if st.session_state.escaped:
@@ -1062,7 +1153,10 @@ def render_report() -> None:
     with st.expander("View copy-ready report"):
         st.code(report, language=None)
     st.markdown('<div class="sw-watermark">SMARTWORLD · ESCAPE THE CHAPTER</div>', unsafe_allow_html=True)
-    if st.button("🔁 Start a new adventure", type="primary", use_container_width=True):
+    replay_col, new_col = st.columns(2)
+    if replay_col.button("🔁 Play this chapter again · new questions", type="primary", use_container_width=True):
+        play_same_chapter_again()
+    if new_col.button("🧭 Choose a different chapter", use_container_width=True):
         reset_game_state()
         for key in ("passage_input", "topic_input", "subject_input", "uploaded_book"):
             if key in st.session_state:
