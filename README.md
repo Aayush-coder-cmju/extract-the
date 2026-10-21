@@ -103,3 +103,5 @@ Official guides: [update and deploy an app](https://docs.streamlit.io/deploy/str
 - Sample answers, evidence quotes, hints, lives, theme changes, clue collection, and the secret-word gate use the same game rules as custom quizzes.
 - Custom passage, photo and scanned-PDF question generation requires `GEMINI_API_KEY`; the key is not requested in the student interface.
 - Streamlit Community Cloud deployment requires the owner to add the key in the app's Secrets settings and make the deployed app public.
+
+TO view the App : https://extract-the-lirzcqwfh5xdkghxskbwse.streamlit.app/
