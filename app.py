@@ -7,8 +7,10 @@ import random
 import re
 import time
 import unicodedata
+import zipfile
 from io import BytesIO
 from urllib.parse import quote
+from xml.etree import ElementTree
 
 import streamlit as st
 from google import genai
@@ -19,10 +21,17 @@ st.set_page_config(page_title="Escape the Chapter", page_icon="🗝️", layout=
 
 
 APP_TITLE = "Escape the Chapter"
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_UPLOAD_FILES = 5
 MAX_PASSAGE_CHARS = 20_000
 MAX_PDF_PAGES = 12
+SUPPORTED_UPLOAD_TYPES = [
+    "png", "jpg", "jpeg", "jpe", "jfif", "webp", "bmp", "gif", "tif", "tiff", "heic", "heif",
+    "pdf", "txt", "md", "csv", "json", "html", "htm", "xml", "rtf",
+    "docx", "pptx", "xlsx", "odt", "odp", "ods",
+]
 LEVELS = ["Easy", "Medium", "Hard"]
 WORD_STOPWORDS = {
     "about", "above", "after", "again", "against", "along", "also", "among", "and", "any", "are", "around",
@@ -423,7 +432,7 @@ def render_map() -> None:
 
 def display_stats() -> None:
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("⭐ Score", f"{st.session_state.score} pts")
+    c1.metric("⭐ Points", f"{st.session_state.score} pts")
     c2.metric("❤️ Lives", f"{st.session_state.lives}/3")
     c3.metric("✨ Saved bonus", f"{st.session_state.saved_points} pts")
     c4.metric("💡 Hints", str(st.session_state.hints_total))
@@ -515,19 +524,17 @@ def parse_quiz_json(response_text: str) -> dict:
         raise ValueError("Gemini returned unreadable quiz data. Please try again.") from exc
 
 
-def quiz_prompt(passage: str, earlier_questions: list[str], attachment_mime: str | None) -> str:
-    attachment_kind = "PDF" if attachment_mime == "application/pdf" else "image"
-    has_attachment = bool(attachment_mime)
-    if has_attachment and passage.strip():
+def quiz_prompt(passage: str, earlier_questions: list[str], has_attachments: bool) -> str:
+    if has_attachments and passage.strip():
         source_instruction = (
-            f"Use the attached textbook {attachment_kind} and the supplied passage. Return only readable educational text "
-            "from the attachment in attachment_text; the app will combine it with the original passage. Ask questions only "
-            "from that combined text. Do not return or rewrite the supplied passage. Do not use outside facts, captions, or guesses."
+            "Use every attached textbook image or scanned PDF page together with the supplied passage. Return only readable "
+            "educational text from all visual attachments in attachment_text; the app combines it with the supplied passage. "
+            "Ask questions only from that combined text. Do not return or rewrite the supplied passage. Do not use outside facts, captions, or guesses."
         )
         sample_response = {"attachment_text": "readable text from the attachment", "questions": []}
-    elif has_attachment:
+    elif has_attachments:
         source_instruction = (
-            f"Transcribe only clearly readable educational text from the attached textbook {attachment_kind} into source_text. "
+            "Transcribe only clearly readable educational text from all attached textbook images or scanned PDF pages into source_text. "
             "Ask questions only from that transcription. Do not use outside facts or guess unreadable text."
         )
         sample_response = {"source_text": "readable text from the attachment", "questions": []}
@@ -547,7 +554,7 @@ def quiz_prompt(passage: str, earlier_questions: list[str], attachment_mime: str
             "hints": ["gentle hint", "stronger hint"],
         }
     ]
-    concise_history = [str(question)[:120] for question in earlier_questions[-9:]]
+    concise_history = [str(question)[:90] for question in earlier_questions[-6:]]
     payload = {
         "provided_passage": passage,
         "earlier_questions_to_avoid": concise_history,
@@ -564,7 +571,7 @@ Input data:
 """.strip()
 
 
-def quiz_response_schema(attachment_mime: str | None, has_passage: bool) -> dict:
+def quiz_response_schema(has_attachments: bool, has_passage: bool) -> dict:
     question_schema = {
         "type": "object",
         "properties": {
@@ -586,10 +593,10 @@ def quiz_response_schema(attachment_mime: str | None, has_passage: bool) -> dict
             "maxItems": 3,
         }
     }
-    if attachment_mime and has_passage:
-        properties["attachment_text"] = {"type": "string", "description": "Readable textbook text from the image or PDF."}
-    elif attachment_mime:
-        properties["source_text"] = {"type": "string", "description": "Readable textbook text transcribed from the upload."}
+    if has_attachments and has_passage:
+        properties["attachment_text"] = {"type": "string", "description": "Readable textbook text from all attached images or scanned PDFs."}
+    elif has_attachments:
+        properties["source_text"] = {"type": "string", "description": "Readable textbook text transcribed from all attached images or scanned PDFs."}
     return {
         "type": "object",
         "properties": properties,
@@ -614,19 +621,20 @@ def gemini_client() -> genai.Client:
 
 def generate_quiz(
     passage: str,
-    attachment_bytes: bytes | None = None,
-    attachment_mime: str | None = None,
+    attachments: list[tuple[bytes, str]] | None = None,
     earlier_questions: list[str] | None = None,
 ) -> dict:
+    attachments = attachments or []
+    has_attachments = bool(attachments)
     client = gemini_client()
-    prompt = quiz_prompt(passage, earlier_questions or [], attachment_mime)
+    prompt = quiz_prompt(passage, earlier_questions or [], has_attachments)
     contents: list[object] = []
-    if attachment_bytes:
-        contents.append(types.Part.from_bytes(data=attachment_bytes, mime_type=attachment_mime or "image/jpeg"))
+    for attachment_bytes, attachment_mime in attachments:
+        contents.append(types.Part.from_bytes(data=attachment_bytes, mime_type=attachment_mime))
     contents.append(prompt)
     try:
         started = time.perf_counter()
-        response_schema = quiz_response_schema(attachment_mime, bool(passage.strip()))
+        response_schema = quiz_response_schema(has_attachments, bool(passage.strip()))
         response_chunks = []
         with st.status("✨ Gemini is reading the chapter and opening the quiz rooms…", expanded=False) as ai_status:
             response_stream = client.models.generate_content_stream(
@@ -635,8 +643,8 @@ def generate_quiz(
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_json_schema=response_schema,
-                    max_output_tokens=2800 if attachment_bytes else 1250,
-                    thinking_config=types.ThinkingConfig(thinking_level="low"),
+                    max_output_tokens=min(5200, 2600 + 500 * len(attachments)) if has_attachments else 1150,
+                    thinking_config=types.ThinkingConfig(thinking_level="minimal"),
                 ),
             )
             has_started = False
@@ -662,7 +670,7 @@ def generate_quiz(
         raise RuntimeError(f"Gemini could not build the quiz. Check the server key, network, and model access. Details: {exc}") from exc
     generated = parse_quiz_json("".join(response_chunks))
     questions = generated.get("questions")
-    if not attachment_bytes:
+    if not has_attachments:
         # Keep the provided source locally instead of making the model echo it
         # back. Long passages no longer inflate the response and wait time.
         quiz = validate_quiz(
@@ -673,7 +681,7 @@ def generate_quiz(
         if passage.strip():
             attachment_text = generated.get("attachment_text")
             if not isinstance(attachment_text, str) or len(attachment_text.split()) < 5:
-                raise ValueError("Gemini could not read enough text in that upload. Try a clearer image/PDF or paste the passage.")
+                raise ValueError("Gemini could not read enough text from the uploaded images/PDFs. Try clearer pages or paste the passage.")
             source_text = f"{passage.strip()}\n\n{attachment_text.strip()}".strip()
             if norm(passage) not in norm(source_text):
                 raise ValueError("The generated source did not preserve your pasted text alongside the uploaded material. Try the passage or upload separately.")
@@ -695,16 +703,119 @@ def read_upload(uploaded_file) -> tuple[str, bytes | None, str | None]:
         return "", None, None
     file_bytes = uploaded_file.getvalue()
     if len(file_bytes) > MAX_UPLOAD_BYTES:
-        raise ValueError("That file is larger than 10 MB. Choose a smaller file or paste the text.")
+        raise ValueError(f"{uploaded_file.name} is larger than 10 MB. Choose a smaller file or paste its text.")
     suffix = uploaded_file.name.rsplit(".", 1)[-1].lower() if "." in uploaded_file.name else ""
-    if suffix in {"txt", "md", "csv"}:
+    if suffix in {"txt", "md", "csv", "json"}:
         try:
             text = file_bytes.decode("utf-8-sig").strip()[:MAX_PASSAGE_CHARS]
             if not text:
-                raise ValueError("That text file is empty. Choose a file with a textbook passage.")
+                raise ValueError(f"{uploaded_file.name} is empty. Choose a file with textbook content.")
             return text, None, None
         except UnicodeDecodeError as exc:
-            raise ValueError("This text file is not UTF-8. Save it as UTF-8 or paste the passage.") from exc
+            raise ValueError(f"{uploaded_file.name} is not UTF-8 text. Save it as UTF-8 or paste the passage.") from exc
+    if suffix in {"html", "htm", "xml"}:
+        try:
+            raw = file_bytes.decode("utf-8-sig")
+            raw = re.sub(r"(?is)<(script|style)\b.*?</\1\s*>", " ", raw)
+            text = html.unescape(re.sub(r"(?s)<[^>]+>", " ", raw))
+            text = re.sub(r"\s+", " ", text).strip()[:MAX_PASSAGE_CHARS]
+            if not text:
+                raise ValueError(f"{uploaded_file.name} contains no readable text.")
+            return text, None, None
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"{uploaded_file.name} could not be decoded as UTF-8.") from exc
+    if suffix == "rtf":
+        try:
+            raw = file_bytes.decode("utf-8-sig", errors="replace")
+            raw = re.sub(r"\\'[0-9a-fA-F]{2}", " ", raw)
+            raw = re.sub(r"\\u-?\d+\??", " ", raw)
+            raw = re.sub(r"\\[a-zA-Z]+-?\d*\s?", " ", raw)
+            text = re.sub(r"[{}]", " ", raw)
+            text = re.sub(r"\s+", " ", text).strip()[:MAX_PASSAGE_CHARS]
+            if not text:
+                raise ValueError(f"{uploaded_file.name} contains no readable text.")
+            return text, None, None
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"I couldn't extract text from {uploaded_file.name}.") from exc
+    if suffix == "docx":
+        try:
+            from docx import Document
+
+            document = Document(BytesIO(file_bytes))
+            pieces = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+            for table in document.tables:
+                for row in table.rows:
+                    pieces.append(" | ".join(cell.text.strip() for cell in row.cells if cell.text.strip()))
+            text = "\n".join(piece for piece in pieces if piece).strip()[:MAX_PASSAGE_CHARS]
+            if not text:
+                raise ValueError(f"{uploaded_file.name} has no readable text.")
+            return text, None, None
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"I couldn't read {uploaded_file.name}. Try saving it as PDF or DOCX again. Details: {exc}") from exc
+    if suffix == "pptx":
+        try:
+            from pptx import Presentation
+
+            presentation = Presentation(BytesIO(file_bytes))
+            pieces = []
+            for slide_number, slide in enumerate(presentation.slides, start=1):
+                slide_text = []
+                for shape in slide.shapes:
+                    if getattr(shape, "has_text_frame", False) and shape.text.strip():
+                        slide_text.append(shape.text.strip())
+                    if getattr(shape, "has_table", False):
+                        for row in shape.table.rows:
+                            slide_text.append(" | ".join(cell.text.strip() for cell in row.cells if cell.text.strip()))
+                if slide_text:
+                    pieces.append(f"Slide {slide_number}: " + "\n".join(slide_text))
+            text = "\n\n".join(pieces).strip()[:MAX_PASSAGE_CHARS]
+            if not text:
+                raise ValueError(f"{uploaded_file.name} has no readable slide text.")
+            return text, None, None
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"I couldn't read {uploaded_file.name}. Try saving it as PDF or PPTX again. Details: {exc}") from exc
+    if suffix == "xlsx":
+        try:
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+            pieces = []
+            for sheet in workbook.worksheets:
+                rows = []
+                for row in sheet.iter_rows(values_only=True):
+                    values = [str(value).strip() for value in row if value is not None and str(value).strip()]
+                    if values:
+                        rows.append(" | ".join(values))
+                if rows:
+                    pieces.append(f"{sheet.title}:\n" + "\n".join(rows))
+            workbook.close()
+            text = "\n\n".join(pieces).strip()[:MAX_PASSAGE_CHARS]
+            if not text:
+                raise ValueError(f"{uploaded_file.name} has no readable spreadsheet text.")
+            return text, None, None
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"I couldn't read {uploaded_file.name}. Try saving it as XLSX or CSV. Details: {exc}") from exc
+    if suffix in {"odt", "odp", "ods"}:
+        try:
+            with zipfile.ZipFile(BytesIO(file_bytes)) as archive:
+                xml_content = archive.read("content.xml")
+            root = ElementTree.fromstring(xml_content)
+            text = " ".join(part.strip() for part in root.itertext() if part.strip())[:MAX_PASSAGE_CHARS]
+            if not text:
+                raise ValueError(f"{uploaded_file.name} has no readable document text.")
+            return text, None, None
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"I couldn't read {uploaded_file.name}. Try exporting it as PDF or DOCX.") from exc
     if suffix == "pdf":
         try:
             from pypdf import PdfReader
@@ -724,17 +835,26 @@ def read_upload(uploaded_file) -> tuple[str, bytes | None, str | None]:
             # Flash-Lite so it can read the page directly.
             return extracted[:MAX_PASSAGE_CHARS], file_bytes, "application/pdf"
         return extracted[:MAX_PASSAGE_CHARS], None, None
-    if suffix in {"png", "jpg", "jpeg", "webp"}:
+    if suffix in {"heic", "heif"}:
+        # Gemini accepts HEIC/HEIF directly; Pillow does not decode these on a
+        # default Streamlit Cloud installation without an extra native plugin.
+        image_mime = "image/heic" if suffix == "heic" else "image/heif"
+        return "", file_bytes, image_mime
+    if suffix in {"png", "jpg", "jpeg", "jpe", "jfif", "webp", "bmp", "gif", "tif", "tiff"}:
         try:
             with Image.open(BytesIO(file_bytes)) as opened:
+                if getattr(opened, "n_frames", 1) > 1:
+                    opened.seek(0)
                 image = ImageOps.exif_transpose(opened).convert("RGB")
-                image.thumbnail((2800, 2800), Image.Resampling.LANCZOS)
+                image.thumbnail((2200, 2200), Image.Resampling.LANCZOS)
                 normalized = BytesIO()
-                image.save(normalized, format="JPEG", quality=93, optimize=True)
+                image.save(normalized, format="JPEG", quality=88, optimize=True)
         except Exception as exc:
-            raise ValueError("I couldn't read that image. Upload a clear PNG, JPG or WEBP textbook page.") from exc
+            raise ValueError(f"I couldn't read {uploaded_file.name}. Try a clear PNG, JPG, WEBP, BMP, GIF, TIF, or TIFF page.") from exc
         return "", normalized.getvalue(), "image/jpeg"
-    raise ValueError("Upload a .txt, .md, .csv, .pdf, .png, .jpg, .jpeg, or .webp file.")
+    raise ValueError(
+        f"{uploaded_file.name} has an unsupported format. Use a textbook image, PDF, text, Word, PowerPoint, spreadsheet, or OpenDocument file."
+    )
 
 
 def load_sample(name: str) -> None:
@@ -799,28 +919,47 @@ def begin_round(quiz: dict, topic: str, subject: str, keep_timer: bool = False) 
         st.session_state.elapsed_seconds = 0
 
 
-def start_adventure(passage_input: str, topic: str, subject: str, uploaded_file) -> None:
+def start_adventure(passage_input: str, topic: str, subject: str, uploaded_files) -> None:
     try:
-        file_text, attachment_bytes, attachment_mime = read_upload(uploaded_file)
-        passage = passage_input.strip()
-        if file_text:
-            passage = f"{passage}\n\n{file_text}".strip() if passage else file_text
-        if not passage and not attachment_bytes:
+        if uploaded_files is None:
+            files = []
+        elif isinstance(uploaded_files, (list, tuple)):
+            files = list(uploaded_files)
+        else:
+            files = [uploaded_files]
+        if len(files) > MAX_UPLOAD_FILES:
+            raise ValueError(f"Choose up to {MAX_UPLOAD_FILES} files per adventure.")
+        total_upload_bytes = sum(len(file.getvalue()) for file in files)
+        if total_upload_bytes > MAX_TOTAL_UPLOAD_BYTES:
+            raise ValueError("The combined upload size must be 25 MB or less. Remove a file or choose smaller files.")
+
+        text_sources = []
+        attachments: list[tuple[bytes, str]] = []
+        for file in files:
+            file_text, attachment_bytes, attachment_mime = read_upload(file)
+            if file_text:
+                text_sources.append(file_text)
+            if attachment_bytes:
+                attachments.append((attachment_bytes, attachment_mime or "application/octet-stream"))
+
+        passage_parts = [passage_input.strip(), *text_sources]
+        passage = "\n\n".join(part for part in passage_parts if part).strip()
+        if not passage and not attachments:
             raise ValueError("Paste a passage, upload a textbook page, or choose one of the samples.")
-        if passage and len(passage.split()) < 20 and not attachment_bytes:
+        if passage and len(passage.split()) < 20 and not attachments:
             raise ValueError("Add at least 20 words so Gemini can make three distinct questions.")
         if len(passage) > MAX_PASSAGE_CHARS:
             raise ValueError(f"Keep the combined passage under {MAX_PASSAGE_CHARS:,} characters so questions stay grounded in the full text.")
 
         selected_sample = st.session_state.sample_name
-        if selected_sample and norm(passage) == norm(SAMPLES[selected_sample]["text"]) and not attachment_bytes:
+        if selected_sample and norm(passage) == norm(SAMPLES[selected_sample]["text"]) and not attachments:
             sample = SAMPLES[selected_sample]
             source_questions = sample["variants"][st.session_state.sample_variant]
             quiz = validate_quiz({"source_text": sample["text"], "questions": source_questions}, expected_source=sample["text"])
             begin_round(quiz, topic or sample["topic"], subject or sample["subject"])
             return
 
-        quiz = generate_quiz(passage, attachment_bytes, attachment_mime)
+        quiz = generate_quiz(passage, attachments)
         st.session_state.sample_name = None
         begin_round(quiz, topic or "Your chapter", subject or "Your subject")
     except Exception as exc:
@@ -845,7 +984,7 @@ def answer_question(option_index: int) -> None:
                 "Round": st.session_state.round,
                 "Level": LEVELS[level],
                 "Result": "Cleared",
-                "Score change": 0,
+                "Points change": 0,
                 "Hint points spent": st.session_state.hints_current * 20,
                 "Time (s)": elapsed,
                 "Hints": st.session_state.hints_current,
@@ -872,7 +1011,7 @@ def answer_question(option_index: int) -> None:
                 "Round": st.session_state.round,
                 "Level": LEVELS[st.session_state.level],
                 "Result": "Fresh round after all lives were used",
-                "Score change": 0,
+                "Points change": 0,
                 "Hint points spent": st.session_state.hints_current * 20,
                 "Time (s)": elapsed,
                 "Hints": st.session_state.hints_current,
@@ -923,7 +1062,7 @@ def advance_after_clear() -> None:
 
 
 def restart_with_fresh_questions() -> None:
-    st.info("New round · same topic · fresh questions. Your score and timer carry on.")
+    st.info("New round · same topic · fresh questions. Your points and timer carry on.")
     try:
         selected_sample = st.session_state.sample_name
         if selected_sample and selected_sample in SAMPLES:
@@ -981,7 +1120,7 @@ def render_setup() -> None:
                 start_adventure(sample["text"], sample["topic"], sample["subject"], None)
                 st.rerun()
 
-    st.markdown('<div class="sw-section-title">Or bring your own chapter</div><div class="sw-section-copy">Paste a short passage, upload a textbook page or file, or combine both.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sw-section-title">Or bring your own chapter</div><div class="sw-section-copy">Paste a short passage, upload multiple textbook pages or files, or combine both.</div>', unsafe_allow_html=True)
     with st.container(border=True):
         topic_col, subject_col = st.columns(2)
         with topic_col:
@@ -995,23 +1134,36 @@ def render_setup() -> None:
             placeholder="Paste at least 20 words. Gemini will build questions only from this material.",
             help="You can also upload a file below. The app checks answer evidence against the supplied chapter.",
         )
-        uploaded_file = st.file_uploader(
-            "Upload a textbook photo or file",
-            type=["png", "jpg", "jpeg", "webp", "pdf", "txt", "md", "csv"],
+        uploaded_files = st.file_uploader(
+            "Upload textbook photos or files",
+            type=SUPPORTED_UPLOAD_TYPES,
             key="uploaded_book",
-            help="Photos and scanned PDFs are read by Gemini. Text PDFs and text files are extracted directly. Up to 10 MB and 12 PDF pages.",
+            accept_multiple_files=True,
+            help="Add up to five images or files, including mixed types. Each file can be up to 10 MB; the combined limit is 25 MB.",
         )
-        if uploaded_file is not None:
+        if uploaded_files:
             try:
-                upload_text, upload_media, _ = read_upload(uploaded_file)
-                if upload_media:
-                    ready_message = "Photo ready for reading" if uploaded_file.name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) else "Scanned PDF ready for reading"
-                else:
-                    ready_message = f"{len(upload_text.split()):,} words extracted"
-                st.success(f"📚 {uploaded_file.name} · {ready_message}")
+                if len(uploaded_files) > MAX_UPLOAD_FILES:
+                    raise ValueError(f"Choose up to {MAX_UPLOAD_FILES} files per adventure.")
+                total_upload_bytes = sum(len(file.getvalue()) for file in uploaded_files)
+                if total_upload_bytes > MAX_TOTAL_UPLOAD_BYTES:
+                    raise ValueError("The combined upload size must be 25 MB or less. Remove a file or choose smaller files.")
+                extracted_words = 0
+                visual_count = 0
+                for uploaded_file in uploaded_files:
+                    upload_text, upload_media, _ = read_upload(uploaded_file)
+                    extracted_words += len(upload_text.split())
+                    visual_count += int(bool(upload_media))
+                st.success(
+                    f"📚 {len(uploaded_files)} file(s) ready · {extracted_words:,} text words · "
+                    f"{visual_count} image/scanned page file(s)"
+                )
             except ValueError as exc:
                 st.error(str(exc))
-        st.caption("Accepted: PNG, JPG, WEBP, PDF, TXT, Markdown and CSV · up to 10 MB · scanned PDFs up to 12 pages")
+        st.caption(
+            "Formats: PNG/JPG/JPE/JFIF/WEBP/BMP/GIF/TIF/HEIC/HEIF · PDF · TXT/MD/CSV/JSON/HTML/XML/RTF · "
+            "DOCX/PPTX/XLSX/ODT/ODP/ODS · up to 5 files · 10 MB each · 25 MB total · 12 pages per PDF"
+        )
         if st.button("🗝️ Start the adventure", type="primary", use_container_width=True):
             start_adventure(
                 st.session_state.passage_input,
@@ -1061,7 +1213,7 @@ def render_play() -> None:
         for hint_index in range(st.session_state.hints_current):
             st.info(f"Hint {hint_index + 1} · −20 points: {question['hints'][hint_index]}")
     st.checkbox(
-        "Use saved bonus points to pay for hints before regular score",
+        "Use saved bonus points to pay for hints before regular points",
         key="use_saved",
         disabled=st.session_state.saved_points < 20,
     )
@@ -1162,7 +1314,7 @@ def make_report_text() -> str:
         "🗝️ ESCAPE THE CHAPTER · SMARTWORLD",
         f"Topic: {st.session_state.topic} ({st.session_state.subject})",
         f"Result: {result}",
-        f"Score now: {st.session_state.score} (starts at 60) · Score spent on hints: {st.session_state.score_spent}",
+        f"Points now: {st.session_state.score} (starts at 60) · Points spent on hints: {st.session_state.score_spent}",
         f"Saved bonus: {st.session_state.saved_points} remaining · Bonus earned: {st.session_state.bonus_earned} · Bonus spent: {st.session_state.saved_spent}",
         f"Hint-free rounds completed: {st.session_state.perfect_rounds}",
         f"Rounds: {st.session_state.round} · Accuracy: {accuracy}% · Correct answers: {st.session_state.correct} · Wrong answers: {st.session_state.wrong}",
@@ -1247,7 +1399,7 @@ def render_report() -> None:
     accuracy = round(st.session_state.correct / st.session_state.attempts * 100) if st.session_state.attempts else 0
     minutes, seconds = divmod(st.session_state.elapsed_seconds, 60)
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Score", f"{st.session_state.score} pts")
+    c1.metric("Points", f"{st.session_state.score} pts")
     c2.metric("Accuracy", f"{accuracy}%")
     c3.metric("Time", f"{minutes:02d}:{seconds:02d}")
     c4.metric("Rounds", str(st.session_state.round))
@@ -1260,7 +1412,7 @@ def render_report() -> None:
     c1.metric("Saved bonus", f"{st.session_state.saved_points} pts")
     c2.metric("Bonus earned", f"{st.session_state.bonus_earned} pts")
     c3.metric("Bonus spent", f"{st.session_state.saved_spent} pts")
-    c4.metric("Score spent on hints", f"{st.session_state.score_spent} pts")
+    c4.metric("Points spent on hints", f"{st.session_state.score_spent} pts")
     st.caption(
         f"Lives remaining in the last round: {st.session_state.lives}/3 · "
         f"Hint points spent in total: {st.session_state.hint_points_spent} · "
