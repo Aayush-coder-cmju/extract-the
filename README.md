@@ -1,49 +1,105 @@
-# Escape the Chapter · Gemma + Streamlit
+# Escape the Chapter - SmartWorld
 
-A server-side Python version of the SmartWorld classroom quiz. Students paste a passage or upload a page; the app creates Easy, Medium, and Hard questions using Gemma through Google's Gemini API. The Google key is read only by Python on the server and is never shown in the student interface.
+An adventure-style Streamlit quiz for revising a textbook passage. Students paste text or upload a supported page, then solve Easy, Medium, and Hard questions to collect pieces of a secret word.
 
-## Run it on Windows
+## What is included
 
-1. Install Python 3.10 or newer.
-2. Open PowerShell in this folder.
-3. Install the packages:
+- `app.py` - the complete Streamlit application
+- `requirements.txt` - Python packages needed to run it
+- `.streamlit/secrets.toml.example` - a safe placeholder for the app owner's Google API key
+- `.gitignore` - keeps local secrets and Python environments out of Git
+- The project presentation PDF is available separately; it is not required to run or deploy the app.
+
+## Requirements
+
+- Windows 10/11 or another computer with Python 3.10 or newer; on Windows, make sure `python` is available from PowerShell
+- Internet access for custom passage/image quiz generation
+- A Google AI Studio API key for custom material; sample quizzes work without a key
+
+The app uses the Google Gen AI Python SDK with **Gemini 3.5 Flash-Lite** (`gemini-3.5-flash-lite`) for custom quizzes. Google lists this model as multimodal, including image and PDF inputs, and optimized for low-latency, lower-cost document processing. See the [official model guide](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite).
+
+## Run locally on Windows
+
+1. Download and extract the ZIP. Open the extracted `Escape the Chapter Final` folder. Confirm that `app.py` and `requirements.txt` are in this folder.
+2. In File Explorer, open this folder, click the address bar, type `powershell`, and press Enter.
+3. Create a private Python environment and install the packages:
 
    ```powershell
-   py -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   py -m pip install -r requirements.txt
+   python -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install --upgrade pip
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
 
-4. Create a Google AI Studio API key. The app uses the hosted Gemma model `gemma-4-26b-a4b-it` through Google's Gemini API.
-5. Copy `.streamlit\secrets.toml.example` to `.streamlit\secrets.toml`, open the new file, and replace the example value with your key:
+4. To use your own passages or textbook images, create a key in [Google AI Studio](https://aistudio.google.com/app/apikey). Copy the example secrets file and open the private copy:
+
+   ```powershell
+   Copy-Item ".streamlit\secrets.toml.example" ".streamlit\secrets.toml"
+   notepad ".streamlit\secrets.toml"
+   ```
+
+   Replace the placeholder with your key and save:
 
    ```toml
-   GEMINI_API_KEY = "your-real-key-goes-here"
+   GEMINI_API_KEY = "paste-your-real-key-here"
    ```
 
-   Keep `secrets.toml` private. It is excluded by `.gitignore`; do not put the key in `app.py`, HTML, a student form, or a public repository.
+   Keep `.streamlit\secrets.toml` private. It is excluded from Git. Never put the real key in `app.py`, in the ZIP, or in a student-facing form.
 
-6. Start the app:
+5. Start the app:
 
    ```powershell
-   py -m streamlit run app.py
+   .\.venv\Scripts\python.exe -m streamlit run app.py
    ```
 
-Streamlit opens the app in your browser. The Biology and History samples work without a key. A key is required when students submit their own passage or a textbook image.
+   Streamlit opens a browser page, normally `http://localhost:8501`. To stop the local server, return to PowerShell and press Ctrl+C.
 
-## Uploads and quiz grounding
+## How to play
 
-- Paste text or upload `.txt`, `.md`, `.csv`, a text-based `.pdf`, or a `.png`, `.jpg`, `.jpeg`, or `.webp` page image.
-- Image uploads go to Gemma for reading. PDF text is extracted on the Python server. Scanned PDFs should be uploaded as page images.
-- Text-passage responses are rejected if Gemma changes the source text. Every question also needs an evidence quote found in the supplied/transcribed passage.
-- Starting score: 60. Each hint costs 20 points. The player starts with 3 lives. After the third wrong answer, the app prepares a new round for the same topic and carries the score and timer forward.
-- A correct answer awards a randomly assigned fragment. The three fragments are shuffled at the final word gate. The player must enter the completed random word to finish.
-- A hint-free three-question round adds 20 points to the saved bonus wallet. The wallet is preserved while the same Streamlit browser session is active.
+1. Try the Biology or History sample, or enter a topic and paste at least 20 words from a passage. You can instead upload TXT, Markdown, CSV, PDF, PNG, JPG/JPEG, or WEBP. Scanned PDFs and textbook photos are read by Gemini; text-based PDFs and text files are extracted by the app.
+2. Press **Start the adventure**. The app creates exactly three passage-based questions: Easy, Medium, then Hard. Each correct answer reveals evidence from the passage, unlocks the next phase, and awards a secret-word fragment.
+3. Arrange the three shuffled fragments, type the completed word, and press **Enter the word** to finish.
+4. The player starts with 60 points and 3 lives. A wrong answer costs one life. A hint costs 20 points; up to two hints are available per question. Correct answers unlock rooms but do not add score points. Completing all three questions without a hint earns 20 points in the saved bonus wallet.
+5. Saved bonus can be kept or selected during play to pay for hints before regular score points. The wallet lasts for the current Streamlit browser session and carries into new adventures in that session.
+6. When all three lives are used, the app starts a fresh round on the same topic and supplied passage. It resets lives, carries the score, saved bonus, and total timer forward, and avoids earlier questions when possible.
+7. The report shows the score, bonus balance, answers, hints, lives lost, round history, per-question times, total time, and revision suggestions. Share it only when you choose WhatsApp or email; the original passage is not included in the share text.
 
-## Deploy for students
+## Upload notes
 
-For Streamlit Community Cloud, publish this folder from a private or public GitHub repository, choose `app.py` as the entry point, and put the key in the app's **Settings → Secrets** area instead of committing `secrets.toml`. Students use the hosted Streamlit URL; the API key remains on the server. If the app is public, use Google AI Studio quotas and billing limits appropriate for your class.
+- Text-based PDFs are extracted on the app server. Scanned PDFs are sent to Gemini for text reading, so a separate photo conversion is not required.
+- PNG, JPG/JPEG and WEBP uploads are validated, rotated using their photo metadata, resized for legibility, and sent to Gemini as an image. If a page is blurry or the content is too short, the app asks you to try again.
+- Uploads are limited to 10 MB; PDFs are limited to 12 pages. This keeps image and document requests within a practical size for the hosted app.
+- Every generated question must include an evidence quote found in the source text. Invalid or unsupported quiz data is rejected.
+- Pasted text can be combined with a text file, image, or scanned PDF. The quiz must preserve the pasted passage and add only readable text from the upload.
 
-## Model selection
+## Key privacy and public-use notes
 
-The default is `gemma-4-26b-a4b-it`. To use another Gemma model supported by the Gemini API, set `GEMMA_MODEL` in the server environment. Do not expose that setting as a student-facing field.
+Students never enter the API key. The app reads it from local Streamlit secrets or the host's secret settings. Pasted text, textbook photos, and scanned PDFs may be sent to Google's API when a custom quiz is generated. The app has no login or database; game data and saved bonus stay in the active Streamlit session.
+
+Anyone using a public app can trigger requests with the owner's API key and use its quota. Keep the key private and monitor the API project's usage limits. Do not include `.streamlit/secrets.toml` in GitHub.
+
+## Update the existing Streamlit app
+
+You can keep using the GitHub repository that already powers your Streamlit app; a new repository is not required.
+
+1. Extract this ZIP. In the existing GitHub repository, replace `app.py` with this package's `app.py`. Keep it at the same path configured as the Streamlit app file. If your current app uses the repository root, place it beside `requirements.txt`.
+2. Add or update `requirements.txt` from this package in the same repository location as the app. You may also update `README.md` and `.gitignore`. Do not upload `.streamlit/secrets.toml` or a real API key; `.streamlit/secrets.toml.example` is safe to commit.
+3. Commit the changes to the same branch connected to Streamlit Community Cloud. Streamlit Cloud should rebuild the existing app from that commit.
+4. Keep the key in the hosted app's **Settings -> Secrets**. If it is already configured, leave it there. Otherwise add:
+
+   ```toml
+   GEMINI_API_KEY = "paste-your-real-key-here"
+   ```
+
+   Save the settings. Never put the real key in GitHub or in `app.py`.
+
+5. Wait for the rebuild to finish, then refresh the app. If it still shows the old version, open **Manage app -> Reboot** and refresh again.
+6. To let anyone use the app, set its sharing access to public in Streamlit app settings and copy the app's `.streamlit.app` link.
+
+Official guides: [update and deploy an app](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy), [manage secrets](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management), and [share an app](https://docs.streamlit.io/deploy/streamlit-community-cloud/share-your-app).
+
+## Verification checklist
+
+- Biology and History sample games can be opened without an API key.
+- Sample answers, evidence quotes, hints, lives, theme changes, clue collection, and the secret-word gate use the same game rules as custom quizzes.
+- Custom passage, photo and scanned-PDF question generation requires `GEMINI_API_KEY`; the key is not requested in the student interface.
+- Streamlit Community Cloud deployment requires the owner to add the key in the app's Secrets settings and make the deployed app public.
