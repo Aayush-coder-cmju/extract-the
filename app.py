@@ -24,7 +24,14 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_PASSAGE_CHARS = 20_000
 MAX_PDF_PAGES = 12
 LEVELS = ["Easy", "Medium", "Hard"]
-WORD_BANK = ["ADVENTURE", "TREASURE", "MYSTERY", "JOURNEY", "STARDUST", "ESCAPE"]
+WORD_STOPWORDS = {
+    "about", "above", "after", "again", "against", "along", "also", "among", "and", "any", "are", "around",
+    "because", "been", "before", "being", "below", "between", "both", "came", "can", "called", "could", "each",
+    "from", "have", "into", "its", "make", "many", "more", "most", "much", "must", "only", "other", "over",
+    "same", "some", "such", "than", "that", "their", "them", "then", "there", "these", "they", "this", "those",
+    "through", "under", "using", "very", "was", "were", "what", "when", "where", "which", "while", "with", "would",
+    "your", "process", "passage", "chapter", "sentence", "according", "described", "describes",
+}
 
 THEMES = [
     {"name": "Mosswild Jungle", "bg": "#071e22", "surface": "#102a2e", "surface2": "#163a38", "field": "#08191d", "border": "#397060", "text": "#f3fff8", "muted": "#c0d3cb", "accent": "#58d68d", "second": "#20b8a6", "gold": "#f6c85f"},
@@ -104,15 +111,43 @@ def norm(value: object) -> str:
     return " ".join(re.findall(r"[\w]+", text, flags=re.UNICODE))
 
 
-def new_word_puzzle(used_words: list[str] | None = None) -> tuple[str, list[str], list[str], list[str]]:
-    used = list(used_words or [])
-    available = [candidate for candidate in WORD_BANK if candidate not in used]
+def new_word_puzzle(
+    used_words: list[str] | None = None,
+    topic: str = "",
+    source_text: str = "",
+) -> tuple[str, list[str], list[str], list[str]]:
+    """Choose a fresh, source-grounded answer word and split it into clues."""
+    used = {norm(candidate).replace(" ", "").casefold() for candidate in (used_words or [])}
+    normalized_source = unicodedata.normalize("NFKC", source_text).casefold()
+    tokens = re.findall(r"[^\W\d_]+", normalized_source, flags=re.UNICODE)
+    source_counts: dict[str, int] = {}
+    for token in tokens:
+        if 4 <= len(token) <= 18 and token not in WORD_STOPWORDS:
+            source_counts[token] = source_counts.get(token, 0) + 1
+
+    # Prefer topic words that also occur in the provided passage, then fall
+    # back to other meaningful words present in that same source.
+    topic_tokens = set(
+        re.findall(r"[^\W\d_]+", unicodedata.normalize("NFKC", topic).casefold(), flags=re.UNICODE)
+    )
+    unused = [token for token in source_counts if token.casefold() not in used]
+    topic_matches = [token for token in unused if token in topic_tokens]
+    available = topic_matches or unused
+
+    # A passage may have only short terms after many replays. Still pick an
+    # unused word from the text before reporting that its unique words ran out.
     if not available:
-        # Once every word has been used, still guarantee the next puzzle differs
-        # from the immediately previous one.
-        previous = used[-1] if used else None
-        available = [candidate for candidate in WORD_BANK if candidate != previous]
-    word = random.choice(available or WORD_BANK)
+        fallback = list(dict.fromkeys(
+            token for token in tokens
+            if 3 <= len(token) <= 18 and token.casefold() not in used and token not in WORD_STOPWORDS
+        ))
+        available = fallback
+    if not available:
+        raise ValueError(
+            "This passage has no unused clue words left. Add a few more lines from the chapter to create a fresh final word."
+        )
+
+    word = random.choice(available).upper()
     quotient, remainder = divmod(len(word), 3)
     parts: list[str] = []
     start = 0
@@ -129,7 +164,6 @@ def new_word_puzzle(used_words: list[str] | None = None) -> tuple[str, list[str]
 
 def reset_game_state() -> None:
     used_words = list(st.session_state.get("used_words", []))
-    word, parts, display_parts, award_parts = new_word_puzzle(used_words)
     saved_wallet = int(st.session_state.get("saved_points", 0))
     st.session_state.update(
         {
@@ -161,10 +195,10 @@ def reset_game_state() -> None:
             "attempts": 0,
             "wrong_indexes": [],
             "fragments": [],
-            "word": word,
-            "word_parts": parts,
-            "word_display_parts": display_parts,
-            "word_award_parts": award_parts,
+            "word": "",
+            "word_parts": [],
+            "word_display_parts": [],
+            "word_award_parts": [],
             "used_words": used_words,
             "theme_index": random.randrange(len(THEMES)),
             "sample_name": None,
@@ -258,19 +292,21 @@ def apply_theme() -> None:
         .sw-map {{ display:flex; justify-content:space-between; gap:4px; border:1px solid var(--quest-border); border-radius:18px; padding:14px 10px; background:var(--quest-surface); margin:12px 0 15px; }}
         .sw-map-focus {{ border:1px solid var(--quest-border); border-left:5px solid var(--quest-accent); border-radius:14px; padding:11px 15px; background:linear-gradient(110deg,var(--quest-surface),var(--quest-surface2)); color:var(--quest-muted); margin:6px 0 14px; transition:background 650ms ease,border-color 650ms ease; }}
         .sw-map-focus strong {{ color:var(--quest-text); }}
-        .st-key-sw-route-map {{ position:relative; overflow:hidden; background:#fffaff; border:1px solid #eadff6; border-radius:22px; padding:13px 14px 8px; margin:14px 0 8px; box-shadow:0 14px 36px #12082a25; --route-fill:0%; }}
-        .st-key-sw-route-map [data-testid="stHorizontalBlock"] {{ position:relative; display:flex; flex-wrap:nowrap; gap:4px; }}
-        .st-key-sw-route-map [data-testid="stHorizontalBlock"]::before {{ content:""; position:absolute; z-index:0; left:10%; right:10%; top:65px; height:4px; border-radius:99px; background:linear-gradient(to right,#6d28d9 0%,#6d28d9 var(--route-fill),#d9caeb var(--route-fill),#d9caeb 100%); }}
-        .st-key-sw-route-map [data-testid="stColumn"] {{ position:relative; z-index:1; min-width:0; }}
-        .st-key-sw-route-map .sw-route-you {{ height:23px; display:flex; align-items:center; justify-content:center; margin:0 0 1px; color:#fff; font-size:.65rem; font-weight:950; letter-spacing:.05em; }}
-        .st-key-sw-route-map .sw-route-you span {{ background:#641fc1; border-radius:999px; padding:3px 11px; box-shadow:0 4px 12px #641fc145; }}
-        .st-key-sw-route-map .sw-route-label {{ color:#20143b; text-align:center; font-size:.9rem; font-weight:850; padding-top:5px; white-space:nowrap; }}
-        .st-key-sw-route-map .st-key-route-stop-0 button,.st-key-sw-route-map .st-key-route-stop-1 button,.st-key-sw-route-map .st-key-route-stop-2 button,.st-key-sw-route-map .st-key-route-stop-3 button,.st-key-sw-route-map .st-key-route-stop-4 button {{ width:52px !important; height:52px !important; min-height:52px !important; padding:0 !important; border-radius:50% !important; margin:auto !important; background:#fff !important; color:#482077 !important; border:1.5px solid #c9b0e4 !important; box-shadow:0 3px 10px #26134414; font-size:1.15rem !important; }}
-        .st-key-sw-route-map .st-key-route-stop-0 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-1 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-2 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-3 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-4 button[kind="primary"] {{ background:#6824c7 !important; color:#fff !important; border-color:#6824c7 !important; box-shadow:0 0 0 5px #eadcf8,0 5px 17px #6824c755 !important; }}
-        .st-key-sw-route-map .st-key-route-stop-0 button:disabled,.st-key-sw-route-map .st-key-route-stop-1 button:disabled,.st-key-sw-route-map .st-key-route-stop-2 button:disabled,.st-key-sw-route-map .st-key-route-stop-3 button:disabled,.st-key-sw-route-map .st-key-route-stop-4 button:disabled {{ opacity:1 !important; background:#fff !important; color:#7e718e !important; border-color:#d3c6e0 !important; box-shadow:none !important; }}
-        .st-key-sw-route-map [data-testid="stButton"] {{ display:flex; justify-content:center; }}
-        @media(max-width:640px) {{ .st-key-sw-route-map {{ padding:10px 4px 6px; }} .st-key-sw-route-map .sw-route-label {{ font-size:.72rem; }} .st-key-sw-route-map .st-key-route-stop-0 button,.st-key-sw-route-map .st-key-route-stop-1 button,.st-key-sw-route-map .st-key-route-stop-2 button,.st-key-sw-route-map .st-key-route-stop-3 button,.st-key-sw-route-map .st-key-route-stop-4 button {{ width:42px !important;height:42px !important;min-height:42px !important; }} .st-key-sw-route-map [data-testid="stHorizontalBlock"]::before {{ top:60px; }} }}
-        @keyframes sw-glow {{ 0%,100% {{ box-shadow:0 0 0 0 color-mix(in srgb,var(--quest-accent) 0%,transparent); }} 50% {{ box-shadow:0 0 16px 2px color-mix(in srgb,var(--quest-accent) 35%,transparent); }} }}
+        .st-key-sw-route-map {{ position:relative; isolation:isolate; overflow:visible; width:100%; box-sizing:border-box; background:linear-gradient(135deg,var(--quest-surface),var(--quest-surface2)); color:var(--quest-text); border:1px solid var(--quest-border); border-radius:22px; padding:14px 12px 10px; margin:14px 0 8px; box-shadow:0 14px 36px #0004; --route-fill:0%; transition:background 650ms ease,border-color 650ms ease; }}
+        .st-key-sw-route-map [data-testid="stVerticalBlock"] {{ overflow:visible; }}
+        .st-key-sw-route-map [data-testid="stHorizontalBlock"] {{ position:relative; display:flex; flex-wrap:nowrap; width:100%; min-width:0; gap:2px; }}
+        .st-key-sw-route-map [data-testid="stHorizontalBlock"]::before {{ content:""; position:absolute; z-index:0; left:10%; right:10%; top:65px; height:4px; border-radius:99px; background:linear-gradient(90deg,var(--quest-accent) 0%,var(--quest-accent) var(--route-fill),var(--quest-border) var(--route-fill),var(--quest-border) 100%); background-size:200% 100%; animation:sw-route-flow 5s ease-in-out infinite; }}
+        .st-key-sw-route-map [data-testid="stColumn"] {{ position:relative; z-index:1; flex:1 1 0; min-width:0; padding:0 1px; }}
+        .st-key-sw-route-map .sw-route-you {{ height:23px; display:flex; align-items:center; justify-content:center; margin:0 0 1px; color:#07111f; font-size:.65rem; font-weight:950; letter-spacing:.05em; }}
+        .st-key-sw-route-map .sw-route-you span {{ background:linear-gradient(110deg,var(--quest-accent),var(--quest-second)); border:1px solid color-mix(in srgb,var(--quest-text) 25%,transparent); border-radius:999px; padding:3px 11px; box-shadow:0 4px 14px color-mix(in srgb,var(--quest-accent) 35%,transparent); }}
+        .st-key-sw-route-map .sw-route-label {{ color:var(--quest-text); text-align:center; font-size:.9rem; font-weight:850; padding-top:5px; white-space:normal; overflow-wrap:anywhere; line-height:1.15; min-height:1.2em; }}
+        .st-key-sw-route-map .st-key-route-stop-0 button,.st-key-sw-route-map .st-key-route-stop-1 button,.st-key-sw-route-map .st-key-route-stop-2 button,.st-key-sw-route-map .st-key-route-stop-3 button,.st-key-sw-route-map .st-key-route-stop-4 button {{ width:52px !important; height:52px !important; min-height:52px !important; padding:0 !important; border-radius:50% !important; margin:auto !important; background:var(--quest-surface2) !important; color:var(--quest-text) !important; border:1.5px solid var(--quest-border) !important; box-shadow:0 4px 14px #0003; font-size:1.15rem !important; }}
+        .st-key-sw-route-map .st-key-route-stop-0 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-1 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-2 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-3 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-4 button[kind="primary"] {{ background:linear-gradient(135deg,var(--quest-accent),var(--quest-second)) !important; color:#07111f !important; border-color:var(--quest-accent) !important; box-shadow:0 0 0 4px color-mix(in srgb,var(--quest-accent) 20%,transparent),0 6px 19px color-mix(in srgb,var(--quest-accent) 35%,transparent) !important; }}
+        .st-key-sw-route-map .st-key-route-stop-0 button:disabled,.st-key-sw-route-map .st-key-route-stop-1 button:disabled,.st-key-sw-route-map .st-key-route-stop-2 button:disabled,.st-key-sw-route-map .st-key-route-stop-3 button:disabled,.st-key-sw-route-map .st-key-route-stop-4 button:disabled {{ opacity:1 !important; background:linear-gradient(135deg,var(--quest-surface2),var(--quest-surface)) !important; color:var(--quest-muted) !important; border-color:var(--quest-border) !important; box-shadow:none !important; }}
+        .st-key-sw-route-map [data-testid="stButton"] {{ display:flex; justify-content:center; overflow:visible; }}
+        @media(max-width:640px) {{ .st-key-sw-route-map {{ padding:10px 3px 7px; }} .st-key-sw-route-map [data-testid="stHorizontalBlock"] {{ gap:0; }} .st-key-sw-route-map .sw-route-label {{ font-size:.68rem; }} .st-key-sw-route-map .sw-route-you {{ font-size:.55rem; }} .st-key-sw-route-map .sw-route-you span {{ padding:3px 7px; }} .st-key-sw-route-map .st-key-route-stop-0 button,.st-key-sw-route-map .st-key-route-stop-1 button,.st-key-sw-route-map .st-key-route-stop-2 button,.st-key-sw-route-map .st-key-route-stop-3 button,.st-key-sw-route-map .st-key-route-stop-4 button {{ width:42px !important;height:42px !important;min-height:42px !important; }} .st-key-sw-route-map [data-testid="stHorizontalBlock"]::before {{ top:60px; left:9%; right:9%; }} }}
+        @keyframes sw-glow {{ 0%,100% {{ transform:scale(1); box-shadow:0 0 0 3px color-mix(in srgb,var(--quest-accent) 16%,transparent),0 5px 13px color-mix(in srgb,var(--quest-accent) 20%,transparent); }} 50% {{ transform:scale(1.06); box-shadow:0 0 0 6px color-mix(in srgb,var(--quest-accent) 23%,transparent),0 7px 22px color-mix(in srgb,var(--quest-accent) 40%,transparent); }} }}
+        @keyframes sw-route-flow {{ 0%,100% {{ filter:brightness(.88); }} 50% {{ filter:brightness(1.3); }} }}
         .st-key-sw-route-map .st-key-route-stop-0 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-1 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-2 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-3 button[kind="primary"],.st-key-sw-route-map .st-key-route-stop-4 button[kind="primary"] {{ animation:sw-glow 2.8s ease-in-out infinite; }}
         @media (prefers-reduced-motion:reduce) {{ *,*::before,*::after {{ animation-duration:.01ms !important; transition-duration:.01ms !important; }} }}
         .sw-stop {{ flex:1; text-align:center; color:#91a7c2; font-size:.72rem; line-height:1.25; }}
@@ -353,7 +389,7 @@ def render_map() -> None:
                 reached = index <= pos
                 marker = "🔒" if not reached else ("✓" if index < pos else icon)
                 st.markdown(
-                    '<div class="sw-route-you"><span>YOU ARE HERE</span></div>' if selected
+                    '<div class="sw-route-you"><span>YOU</span></div>' if selected
                     else '<div class="sw-route-you"></div>',
                     unsafe_allow_html=True,
                 )
@@ -719,8 +755,14 @@ def clear_sample() -> None:
 
 def choose_new_word() -> None:
     used_words = list(st.session_state.get("used_words", []))
-    word, pieces, display_pieces, award_pieces = new_word_puzzle(used_words)
-    st.session_state.used_words = (used_words + [word])[-len(WORD_BANK):]
+    word, pieces, display_pieces, award_pieces = new_word_puzzle(
+        used_words,
+        topic=st.session_state.get("topic", ""),
+        source_text=st.session_state.get("source_text", ""),
+    )
+    # Keep the complete session history so a word cannot recur after a handful
+    # of rounds, as it did with the previous six-word rotation.
+    st.session_state.used_words = used_words + [word]
     st.session_state.word = word
     st.session_state.word_parts = pieces
     st.session_state.word_display_parts = display_pieces
@@ -1055,9 +1097,10 @@ def render_cleared() -> None:
 
 def render_word_gate() -> None:
     st.markdown(
-        '<div class="sw-panel"><div class="sw-kicker">Final lock · all three fragments collected</div><h2>🧩 Unscramble the final word</h2><p>Your three letter groups are mixed up. Rearrange the scrambled fragments to make one secret word, type it below, and press Enter to escape.</p></div>',
+        '<div class="sw-panel"><div class="sw-kicker">Final lock · all three fragments collected</div><h2>🧩 Unscramble the final word</h2><p>Your three letter groups are mixed up. Rearrange them into a meaningful word found in your chapter, type it below, and press Enter to escape.</p></div>',
         unsafe_allow_html=True,
     )
+    st.caption(f"Every letter comes from the supplied text about {st.session_state.topic}.")
     tiles = "".join(f'<span class="sw-fragment">{html.escape(part)}</span>' for part in st.session_state.word_display_parts)
     st.markdown(f'<div class="sw-kicker" style="text-align:center;margin:16px 0 5px">Scrambled clue fragments · arrange these letter groups</div><div style="text-align:center;margin:8px 0 20px">{tiles}</div>', unsafe_allow_html=True)
     with st.form("word-gate-form", clear_on_submit=False):
