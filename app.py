@@ -11,9 +11,6 @@ from io import BytesIO
 from urllib.parse import quote
 from xml.etree import ElementTree
 import streamlit as st
-from google import genai
-from google.genai import types
-from PIL import Image, ImageOps
 st.set_page_config(page_title='Escape the Chapter', page_icon='🗝️', layout='wide')
 APP_TITLE = 'Escape the Chapter'
 MODEL_NAME = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite')
@@ -250,7 +247,8 @@ def quiz_response_schema(has_attachments: bool, has_passage: bool) -> dict:
         properties['source_text'] = {'type': 'string', 'description': 'Readable textbook text transcribed from all attached images or scanned PDFs.'}
     return {'type': 'object', 'properties': properties, 'required': list(properties), 'additionalProperties': False}
 
-def gemini_client() -> genai.Client:
+def gemini_client():
+    from google import genai
     api_key = ''
     try:
         api_key = str(st.secrets.get('GEMINI_API_KEY', '')).strip()
@@ -262,6 +260,7 @@ def gemini_client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 def generate_quiz(passage: str, attachments: list[tuple[bytes, str]] | None=None, earlier_questions: list[str] | None=None) -> dict:
+    from google.genai import types
     attachments = attachments or []
     has_attachments = bool(attachments)
     client = gemini_client()
@@ -453,6 +452,7 @@ def read_upload(uploaded_file) -> tuple[str, bytes | None, str | None]:
         return ('', file_bytes, image_mime)
     if suffix in {'png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'bmp', 'gif', 'tif', 'tiff'}:
         try:
+            from PIL import Image, ImageOps
             with Image.open(BytesIO(file_bytes)) as opened:
                 if getattr(opened, 'n_frames', 1) > 1:
                     opened.seek(0)
