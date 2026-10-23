@@ -5,6 +5,9 @@
 ## View the app
 
 [Open Escape the Chapter](https://extract-the-lirzcqwfh5xdkghxskbwse.streamlit.app/)
+## Youtube video :
+
+https://www.youtube.com/watch?v=qWTpSaXkn9Y
 
 ## How to play
 
