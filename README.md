@@ -56,7 +56,6 @@ You can update the repository already connected to the live app; you do not need
 - `app.py` — Streamlit application
 - `Escape_the_Chapter_Final.py` — matching standalone copy of the current application file
 - `requirements.txt` — Python dependencies for the hosted application
-- `.streamlit/secrets.toml.example` — safe example showing the required secret name; it contains no real key
 - `.gitignore` — excludes private secrets and local environments from Git
 
 ## Notes
